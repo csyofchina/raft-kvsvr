@@ -89,7 +89,9 @@ func (mr *Master) forwardRegistrations(ch chan string) {
 		if len(mr.workers) > i {
 			// there's a worker that we haven't told schedule() about.
 			w := mr.workers[i]
+			debug("worker:%s ready\n", w)
 			go func() { ch <- w }() // send without holding the lock.
+			debug("worker:%s send to chan already\n", w)
 			i = i + 1
 		} else {
 			// wait for Register() to add an entry to workers[]
