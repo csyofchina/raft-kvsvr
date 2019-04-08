@@ -170,6 +170,7 @@ func checkDefault1(value reflect.Value, depth int, name string) {
 					what)
 			}
 			errorCount += 1
+			fmt.Printf("name:%s,%+v != %+v",t.Name(),reflect.Zero(t).Interface(), value.Interface())
 			mu.Unlock()
 		}
 		return

@@ -3,10 +3,15 @@ package raftkv
 import "labrpc"
 import "crypto/rand"
 import "math/big"
-
+import "time"
+import "sync"
 
 type Clerk struct {
-	servers []*labrpc.ClientEnd
+	servers    []*labrpc.ClientEnd
+	lastLeader int
+	Id         int64
+	SeqNum     int64
+	mu         sync.Mutex
 	// You will have to modify this struct.
 }
 
@@ -20,6 +25,10 @@ func nrand() int64 {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
+	ck.lastLeader = -1
+	ck.Id = 0
+	DPrintf("MakeClerk")
+	ck.SeqNum = nrand()
 	// You'll have to add code here.
 	return ck
 }
@@ -36,10 +45,97 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 //
-func (ck *Clerk) Get(key string) string {
+func (ck *Clerk) ProcessGetRsp(index int, reply *GetReply) (bool, string) {
+	if reply.WrongLeader == true {
+		DPrintf("client %d call get %d ,wrong leader,reply=%+v",
+			ck.Id, index, reply)
+	} else {
+		ck.mu.Lock()
+		if ck.Id <= 0 && reply.Id > 0 {
+			ck.Id = reply.Id
+		}
+		if ck.lastLeader != index {
+			ck.lastLeader = index
+		}
+		ck.mu.Unlock()
+		if reply.Err == "" {
+			DPrintf("client %d, get Success,reply:+%+v", ck.Id, reply)
+			return true, reply.Value
+		} else {
+			DPrintf("Err:%s", reply.Err)
+		}
+	}
+	return false, ""
+}
 
+func (ck *Clerk) ProcessPutAppendRsp(index int, reply *PutAppendReply) bool {
+	if reply.WrongLeader == true {
+		DPrintf("client %d call put %d ,wrong leader,reply=%+v",
+			ck.Id, index, reply)
+	} else {
+		ck.mu.Lock()
+		if ck.Id <= 0 && reply.Id > 0 {
+			ck.Id = reply.Id
+		}
+		if ck.lastLeader != index {
+			ck.lastLeader = index
+		}
+		ck.mu.Unlock()
+		if reply.Err == "" {
+			DPrintf("client %d, put Success,reply:+%+v", ck.Id, reply)
+			return true
+		} else {
+			DPrintf("Err:%s", reply.Err)
+		}
+	}
+	return false
+}
+
+func (ck *Clerk) Get(key string) string {
+	ck.SeqNum = ck.SeqNum + 1
+	seqNum := ck.SeqNum
+	index := 0
+	n := len(ck.servers)
+	DPrintf("client %d start to Get", ck.Id)
+	for {
+		DPrintf("client %d start to call get %d,seq=%d", index, index, seqNum)
+		done := make(chan bool, 1)
+		//value := ""
+		if ck.lastLeader > 0 {
+			index = ck.lastLeader
+		}
+		args := NewGetArgs(key, ck.Id, seqNum)
+		reply := NewGetReply()
+		go func() {
+			ok := ck.sendGet(index, args, reply)
+			done <- ok
+		}()
+		select {
+		case <-time.After(200 * time.Millisecond):
+			DPrintf("client %d get timeout,leader:%d", ck.Id, index)
+			index = (index + 1) % n
+			ck.lastLeader = -1
+		case ok := <-done:
+			if !ok {
+				DPrintf("client %d call get %d fail", ck.Id, index)
+			} else {
+				ret, value := ck.ProcessGetRsp(index, reply)
+				if ret {
+					return value
+				} 
+			}
+			ck.lastLeader = -1
+			index = (index + 1) % n
+		}
+
+	}
 	// You will have to modify this function.
-	return ""
+}
+
+func (ck *Clerk) sendGet(index int, args *GetArgs, reply *GetReply) bool {
+	ok := ck.servers[index].Call("KVServer.Get", args, reply)
+	//DPrintf("sendGet,args=%+v,reply=%+v",args,reply)
+	return ok
 }
 
 //
@@ -54,6 +150,49 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	ck.SeqNum = ck.SeqNum + 1
+	seqNum := ck.SeqNum
+	n := len(ck.servers)
+	DPrintf("client %d start to put key = %s,value = %s", ck.Id, key, value)
+	index := 0
+	for {
+		done := make(chan bool, 1)
+		if ck.lastLeader > 0 {
+			index = ck.lastLeader
+		}
+		DPrintf("client %d start to call put %d,seqNum %d", ck.Id, index, seqNum)
+		args := NewPutAppendArgs(key, value, op, ck.Id, seqNum)
+		reply := NewPutAppendReply()
+		go func() {
+			ok := ck.sendPutAppend(index, args, reply)
+			done <- ok
+		}()
+		select {
+		case <-time.After(200 * time.Millisecond):
+			DPrintf("client %d timeout,leader:%d", ck.Id, index)
+			index = (index + 1) % n
+			ck.lastLeader = -1
+			continue
+		case ok := <-done:
+			if ok {
+				ret := ck.ProcessPutAppendRsp(index, reply)
+				if ret {
+					return
+				}
+			} else {
+				DPrintf("client %d call putappend %d fail", ck.Id, index)
+			}
+			ck.lastLeader = -1
+			index = (index + 1) % n
+		}
+	}
+	//DPrintf("Put End")
+	// You will have to modify this function.
+}
+func (ck *Clerk) sendPutAppend(index int, args *PutAppendArgs,
+	reply *PutAppendReply) bool {
+	ok := ck.servers[index].Call("KVServer.PutAppend", args, reply)
+	return ok
 }
 
 func (ck *Clerk) Put(key string, value string) {

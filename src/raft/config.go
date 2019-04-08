@@ -224,7 +224,7 @@ func (cfg *config) checkTimeout() {
 func (cfg *config) cleanup() {
 	for i := 0; i < len(cfg.rafts); i++ {
 		if cfg.rafts[i] != nil {
-			cfg.rafts[i].Kill()
+			go cfg.rafts[i].Kill()
 		}
 	}
 	cfg.net.Cleanup()
