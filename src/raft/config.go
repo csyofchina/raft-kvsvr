@@ -113,7 +113,7 @@ func (cfg *config) crash1(i int) {
 	rf := cfg.rafts[i]
 	if rf != nil {
 		cfg.mu.Unlock()
-		rf.Kill()
+		go rf.Kill()
 		cfg.mu.Lock()
 		cfg.rafts[i] = nil
 	}
@@ -187,7 +187,8 @@ func (cfg *config) start1(i int) {
 				cfg.mu.Unlock()
 
 				if m.CommandIndex > 1 && prevok == false {
-					err_msg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
+					err_msg = fmt.Sprintf("server %v apply out of order %v,cfglogs = %+v",
+						 i, m.CommandIndex, cfg.logs[i])
 				}
 			} else {
 				err_msg = fmt.Sprintf("committed command %v is not an int", m.Command)
