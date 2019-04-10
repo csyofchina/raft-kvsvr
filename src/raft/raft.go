@@ -355,6 +355,9 @@ func (rf *Raft) UpdateCommitIndex(toCommitIndex int) (ret bool) {
 		}
 		//DPrintf1("UpdateCommitIndex: cnt = %d",cnt)
 		if cnt >= len(rf.peers)/2 {
+			if rf.log.entries[toCommitIndex].Term != rf.currTerm {
+				return false
+			}	
 			rf.commitIndex = toCommitIndex
 			ret = true
 			for _, svr := range toBeApplied {
@@ -439,12 +442,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		DPrintf("Append Req %d: ret = -1", rf.me)
 		reply.Success = false
 		rf.recvAppendChan <- args.LeaderId
-		if lastIndex == 0 {
-			reply.ConflictIndex = 1
-		}else{
-			reply.ConflictIndex = lastIndex
-		}
-		reply.ConflictTerm = -1
+		reply.ConflictIndex = lastIndex
+		reply.ConflictTerm = 0
 		goto End
 	}
 	if rf.log.entries[args.PreLogIndex].Term != args.PreLogTerm {
@@ -452,7 +451,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		reply.ConflictTerm = rf.log.entries[args.PreLogIndex].Term
 		reply.ConflictIndex = rf.log.getFristIndexInTerm(reply.ConflictTerm)
-		if reply.ConflictIndex == 0 {
+		if reply.ConflictIndex == 0 || reply.ConflictTerm > 0{
 			reply.ConflictIndex = 1
 		}
 		rf.recvAppendChan <- args.LeaderId
@@ -486,12 +485,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				applyMsg = append(applyMsg, msg)
 			}
 			rf.lastApplied = rf.commitIndex
-			DPrintf1("start to applymsg2,lastApplied=%d,commitIndex=%d,svr = %d,applymsg = %+v\n", rf.lastApplied, rf.commitIndex, rf.me, applyMsg)
-			go func(applyMsg []ApplyMsg) {
+			DPrintf1("start to applymsg2,lastApplied=%d,commitIndex=%d,svr = %d,applymsg = %+v\n",
+				 rf.lastApplied, rf.commitIndex, rf.me, applyMsg)
+			//go func(applyMsg []ApplyMsg) {
 				for _, msg := range applyMsg {
 					rf.applyCh <- msg
 				}
-			}(applyMsg)
+			//}(applyMsg)
 		}
 	}
 	reply.Success = true
@@ -566,12 +566,12 @@ func (rf *Raft) ProcessAppendEntriesRsp(svrindex int, args *AppendEntriesArgs, r
 		DPrintf1("svr:%d reply false,indexdecre to %d\n", svrindex, rf.nextIndex[svrindex])
 	}
 	if toApply {
-		go func(applyMsg []ApplyMsg) {
+		//go func(applyMsg []ApplyMsg) {
 			DPrintf1("start to applymsg3,svr = %d, applymsg = %+v\n", rf.me, applyMsg)
 			for _, msg := range applyMsg {
 				rf.applyCh <- msg
 			}
-		}(applyMsg)
+		//}(applyMsg)
 	}
 End:
 	rf.mu.Unlock()
@@ -606,13 +606,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = rf.currTerm
 	} else {
 		if args.Term > rf.currTerm {
-			rf.currTerm = args.Term
-			rf.votedFor = -1
 			if rf.state != Follower {
 				rf.state = Follower
-				DPrintf1("svr %d recv votereq from %d,and convert to follower,args = %+v,reply = %+v",
-					rf.me,args.CandidateId,args,reply)
+				DPrintf1("svr %d recv votereq from %d,and convert to follower,args = %+v,lastTerm=%d,lastIndex=%d,currTerm=%d",
+					rf.me,args.CandidateId,args,lastTerm,lastIndex,rf.currTerm)
 			}
+			rf.currTerm = args.Term
+			rf.votedFor = -1
 		}
 		reply.Term = rf.currTerm
 		if rf.votedFor < 0 {
@@ -624,9 +624,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 				reply.VoteGranted = true
 				reply.VoteId = rf.me
 				rf.grantVoteChan <- args.CandidateId
-				DPrintf1("%d vote for %d", rf.me, args.CandidateId)
+				DPrintf1("%d vote for %d,argsTerm=%d,argsIndex=%d,Term=%d,Index=%d",
+					 rf.me, args.CandidateId,args.LastLogTerm, args.LastLogIndex, lastTerm, lastIndex)
 			} else {
-				DPrintf("%d refuse to vote for %d,argsTerm=%d,argsIndex=%d,Term=%d,Index=%d",
+				DPrintf1("%d refuse to vote for %d,argsTerm=%d,argsIndex=%d,Term=%d,Index=%d",
 					rf.me, args.CandidateId, args.LastLogTerm, args.LastLogIndex, lastTerm, lastIndex)
 			}
 		} else {
@@ -799,7 +800,7 @@ func (rf *Raft) candidateLoop() {
 		if voted == false {
 			rf.mu.Lock()
 			lastindex, lastterm := rf.log.lastInfo()
-			rf.currTerm++
+			rf.currTerm += 1 
 			rf.votedFor = rf.me
 			rf.leaderId = -1
 			rf.mu.Unlock()
