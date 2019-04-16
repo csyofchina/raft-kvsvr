@@ -49,6 +49,7 @@ type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
 	CommandIndex int
+	Snapshot	 bool
 }
 
 type LogEntry struct {
@@ -105,25 +106,35 @@ type Raft struct {
 //}
 // return currentTerm and whether this server
 // believes it is the leader.
-func (rf *Raft) GetState() (int, bool) {
-	var term int
-	var isleader bool
-	// Your code here (2A).
-	rf.mu.Lock()
-	term = rf.currTerm
-	if rf.state == "leader" {
-		isleader = true
-	} else {
-		isleader = false
-	}
-	rf.mu.Unlock()
-	return term, isleader
-}
 
 func (rf *Raft) State() string {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.state
+}
+
+func (rf *Raft) IsLeader() (bool,int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.state == Leader {
+		return true,rf.currTerm
+	}
+	return false,rf.currTerm
+}
+
+func (rf *Raft) GetState() (int, bool) {
+       var term int
+       var isleader bool
+       // Your code here (2A).
+       rf.mu.Lock()
+       term = rf.currTerm
+       if rf.state == "leader" {
+               isleader = true
+       } else {
+               isleader = false
+       }
+       rf.mu.Unlock()
+       return term, isleader
 }
 
 /*
@@ -145,8 +156,7 @@ func (rf *Raft) SetState(state string) {
 			rf.matchIndex[index] = 0
 		}
 	}
-}
-*/
+}*/
 
 func (rf *Raft) CountPeer() int {
 	rf.mu.Lock()
@@ -793,7 +803,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 func (rf *Raft) candidateLoop() {
 	voted := false
 	sumVote := 0
-	waitperiod := time.Duration(rand.Intn(300)+400) * time.Millisecond
+	waitperiod := time.Duration(rand.Intn(300)+500) * time.Millisecond
 	electionTimer := time.NewTimer(waitperiod)
 	voteRspChan := make(chan int, 5)
 	for rf.State() == "candidate" {
@@ -843,7 +853,7 @@ func (rf *Raft) candidateLoop() {
 			}
 			voted = true
 			sumVote = 1
-			waitperiod = time.Duration(rand.Intn(300)+400) * time.Millisecond
+			waitperiod = time.Duration(rand.Intn(300)+500) * time.Millisecond
 			electionTimer = time.NewTimer(waitperiod)
 		}
 		if sumVote >= rf.CountPeer()/2+1 {
@@ -875,7 +885,7 @@ func (rf *Raft) candidateLoop() {
 
 func (rf *Raft) followerLoop() {
 	rand.Seed(time.Now().Unix())
-	waitperiod := time.Duration(rand.Intn(300)+400) * time.Millisecond
+	waitperiod := time.Duration(rand.Intn(300)+500) * time.Millisecond
 	timeoutTimer := time.NewTimer(waitperiod)
 	for rf.State() == Follower {
 		DPrintf(" followerloop %d : start", rf.me)
@@ -919,7 +929,7 @@ func (rf *Raft) followerLoop() {
 		if !timeoutTimer.Stop() {
 			<-timeoutTimer.C
 		}
-		waitperiod = time.Duration(rand.Intn(300)+400) * time.Millisecond
+		waitperiod = time.Duration(rand.Intn(300)+500) * time.Millisecond
 		timeoutTimer.Reset(waitperiod)
 	}
 }

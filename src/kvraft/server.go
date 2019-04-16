@@ -37,6 +37,7 @@ type KVServer struct {
 	mu      		sync.Mutex
 	me      		int
 	rf      		*raft.Raft
+	persist 		*raft.Persister
 	kvMap			map[string]string
 	applyCh 		chan raft.ApplyMsg
 	clientMap 		map[int64]LastSeq
@@ -69,12 +70,13 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 	
 	//New clinet?
-	if args.Id <= 0 {
+	/*
+	if args.Id < 0 {
 		reply.Id = kv.AllocateId()
 		clientId = reply.Id 
 	}else {
 		clientId = args.Id
-	}
+	}*/
 	kv.mu.Lock()	
 	lastSeq, ok := kv.clientMap[clientId]
 	kv.mu.Unlock()
@@ -127,14 +129,15 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		DPrintf("kv%d:client %d call wrong leader",kv.me,args.Id)
 		return
 	}
-	
+	clientId = args.Id
 	//New clinet?
-	if args.Id <= 0 {
+	/*
+	if args.Id < 0 {
 		reply.Id = kv.AllocateId()
 		clientId = reply.Id 
 	}else {
 		clientId = args.Id
-	}
+	}*/
 	
 	kv.mu.Lock()	
 	lastSeq, ok := kv.clientMap[clientId]
@@ -169,8 +172,8 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		     }  
 			 reply.Id = clientId
 			 reply.Err = ""
-			 DPrintf("kv %d finish PutAppend ,index = %d,seqNum = %d,reply%+v",
-			 	kv.me,index,args.SeqNum,reply)
+			 DPrintf("kv %d finish PutAppend ,index = %d,clientId = %d,seqNum = %d,key =%s,value=%s",
+			 	kv.me,index,clientId,args.SeqNum,args.Key,args.Value)
 		case  <-kv.stopCh:
 			DPrintf("stop put wait")
 	}
@@ -189,30 +192,32 @@ func (kv *KVServer) WriteKvMap() {
 							preSeq,ok := kv.clientMap[op.ClientId] 
 							if ok {
 								if preSeq.SeqNum == op.SeqNum {
-									DPrintf("kv %d index = %d,put key=%s value=%s again",
-									kv.me,msg.CommandIndex,op.Key,op.Value)
+									DPrintf("kv %d index = %d,client %d put key=%s value=%s again",
+									kv.me,msg.CommandIndex,op.ClientId,op.Key,op.Value)
+									kv.mu.Unlock()
 									break
 								}
 							}
 							kv.kvMap[op.Key] = op.Value
 							value = op.Value
 							kv.clientMap[op.ClientId] = LastSeq{SeqNum:op.SeqNum}
-							DPrintf("kv %d index = %d,put,key=%s,value=%s",
-							kv.me,msg.CommandIndex,op.Key,value)
+							DPrintf("kv %d index = %d,client %d put key=%s,value=%s",
+							kv.me,msg.CommandIndex,op.ClientId,op.Key,value)
 						}else if op.Operation == "Append" {
 							preSeq,ok := kv.clientMap[op.ClientId] 
 							if ok {
 								if preSeq.SeqNum == op.SeqNum {
-									DPrintf("kv %d index = %d,append key=%s value=%s again",
-									kv.me,msg.CommandIndex,op.Key,op.Value)
+									DPrintf("kv %d index = %d,client %d append key=%s value=%s again",
+									kv.me,msg.CommandIndex,op.ClientId,op.Key,op.Value)
+									kv.mu.Unlock()
 									break
 								}
 							}
 							kv.kvMap[op.Key] += op.Value
 							value = kv.kvMap[op.Key]
 							kv.clientMap[op.ClientId] = LastSeq{SeqNum:op.SeqNum}
-							DPrintf("kv %d index = %d,append,key=%s,value=%s",
-							kv.me,msg.CommandIndex,op.Key,value)
+							DPrintf("kv %d index = %d,client %d append key=%s,value=%s",
+							kv.me,msg.CommandIndex,op.ClientId,op.Key,op.Value)
 					    }else if op.Operation == "Get" {
 					    	value = kv.kvMap[op.Key]
 					    	lastReply := GetReply{WrongLeader:false,Value:value,Id:op.ClientId}
@@ -285,8 +290,19 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.clientMap = make(map[int64]LastSeq)
 	kv.kvMap = make(map[string]string)
 	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.persist = persister
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	// You may need initialization code here.
 	go kv.WriteKvMap()
 	return kv
+}
+
+func (kv *KVServer) CheckSnapshot bool {
+	if kv.maxraftstate < 0 {
+		return false
+	}		
+	if kv.maxraftstate - kv.persist.RaftStateSize() < kv.maxraftstate/10 {
+		return true
+	}
+	return false
 }

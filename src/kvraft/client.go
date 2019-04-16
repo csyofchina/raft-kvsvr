@@ -6,6 +6,15 @@ import "math/big"
 import "time"
 import "sync"
 
+var clerknum int64 = 0 
+func (ck *Clerk) GetClientId() (ret int64) {
+	ck.mu.Lock()
+	clerknum++
+	ret = clerknum
+	ck.mu.Unlock()
+	return
+}
+
 type Clerk struct {
 	servers    []*labrpc.ClientEnd
 	lastLeader int
@@ -22,11 +31,12 @@ func nrand() int64 {
 	return x
 }
 
+
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	ck.lastLeader = -1
-	ck.Id = 0
+	ck.Id = ck.GetClientId()
 	DPrintf("MakeClerk")
 	ck.SeqNum = nrand()
 	// You'll have to add code here.
@@ -51,9 +61,6 @@ func (ck *Clerk) ProcessGetRsp(index int, reply *GetReply) (bool, string) {
 			ck.Id, index, reply)
 	} else {
 		ck.mu.Lock()
-		if ck.Id <= 0 && reply.Id > 0 {
-			ck.Id = reply.Id
-		}
 		if ck.lastLeader != index {
 			ck.lastLeader = index
 		}
@@ -74,15 +81,12 @@ func (ck *Clerk) ProcessPutAppendRsp(index int, reply *PutAppendReply) bool {
 			ck.Id, index, reply)
 	} else {
 		ck.mu.Lock()
-		if ck.Id <= 0 && reply.Id > 0 {
-			ck.Id = reply.Id
-		}
 		if ck.lastLeader != index {
 			ck.lastLeader = index
 		}
 		ck.mu.Unlock()
 		if reply.Err == "" {
-			DPrintf("client %d, put Success,reply:+%+v", ck.Id, reply)
+			//DPrintf("client %d, put Success,reply:+%+v", ck.Id, reply)
 			return true
 		} else {
 			DPrintf("Err:%s", reply.Err)
@@ -96,8 +100,13 @@ func (ck *Clerk) Get(key string) string {
 	seqNum := ck.SeqNum
 	index := 0
 	n := len(ck.servers)
+	connectcnt := 0
 	DPrintf("client %d start to Get", ck.Id)
 	for {
+		connectcnt++
+		if connectcnt%n == 0 {
+			time.Sleep(time.Duration(250)*time.Millisecond)
+		}
 		DPrintf("client %d start to call get %d,seq=%d", index, index, seqNum)
 		done := make(chan bool, 1)
 		//value := ""
@@ -153,9 +162,14 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ck.SeqNum = ck.SeqNum + 1
 	seqNum := ck.SeqNum
 	n := len(ck.servers)
-	DPrintf("client %d start to put key = %s,value = %s", ck.Id, key, value)
+	connectcnt := 0
+	//DPrintf("client %d start to put key = %s,value = %s", ck.Id, key, value)
 	index := 0
 	for {
+		connectcnt++
+		if connectcnt%n == 0 {
+			time.Sleep(time.Duration(250)*time.Millisecond)
+		}
 		done := make(chan bool, 1)
 		if ck.lastLeader > 0 {
 			index = ck.lastLeader
@@ -168,8 +182,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			done <- ok
 		}()
 		select {
-		case <-time.After(200 * time.Millisecond):
-			DPrintf("client %d timeout,leader:%d", ck.Id, index)
+		case <-time.After(500 * time.Millisecond):
+			DPrintf("client %d timeout,leader:%d,connect cnt = %d", 
+				ck.Id, index,connectcnt)
 			index = (index + 1) % n
 			ck.lastLeader = -1
 			continue
@@ -177,6 +192,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			if ok {
 				ret := ck.ProcessPutAppendRsp(index, reply)
 				if ret {
+					DPrintf("client %d putappend to %d success,key = %s,value = %s,seq=%d",
+					ck.Id,index,key,value,seqNum)
 					return
 				}
 			} else {
