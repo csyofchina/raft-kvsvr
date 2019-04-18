@@ -108,28 +108,32 @@ func (ck *Clerk) Get(key string) string {
 			time.Sleep(time.Duration(250)*time.Millisecond)
 		}
 		DPrintf("client %d start to call get %d,seq=%d", index, index, seqNum)
-		done := make(chan bool, 1)
+		done := make(chan int, 5)
 		//value := ""
 		if ck.lastLeader > 0 {
 			index = ck.lastLeader
 		}
 		args := NewGetArgs(key, ck.Id, seqNum)
 		reply := NewGetReply()
-		go func() {
+		go func(index int) {
 			ok := ck.sendGet(index, args, reply)
-			done <- ok
-		}()
+			if ok {
+				done <- index
+			}else{
+				done <- -1
+			}
+		}(index)
 		select {
 		case <-time.After(200 * time.Millisecond):
 			DPrintf("client %d get timeout,leader:%d", ck.Id, index)
 			index = (index + 1) % n
 			ck.lastLeader = -1
-		case ok := <-done:
-			if !ok {
-				DPrintf("client %d call get %d fail", ck.Id, index)
+		case ret := <-done:
+			if ret < 0 {
+				DPrintf("client %d call get fail", ck.Id)
 			} else {
-				ret, value := ck.ProcessGetRsp(index, reply)
-				if ret {
+				ok, value := ck.ProcessGetRsp(ret, reply)
+				if ok {
 					return value
 				} 
 			}
@@ -170,17 +174,21 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if connectcnt%n == 0 {
 			time.Sleep(time.Duration(250)*time.Millisecond)
 		}
-		done := make(chan bool, 1)
+		done := make(chan int, 5)
 		if ck.lastLeader > 0 {
 			index = ck.lastLeader
 		}
 		DPrintf("client %d start to call put %d,seqNum %d", ck.Id, index, seqNum)
 		args := NewPutAppendArgs(key, value, op, ck.Id, seqNum)
 		reply := NewPutAppendReply()
-		go func() {
+		go func(index int) {
 			ok := ck.sendPutAppend(index, args, reply)
-			done <- ok
-		}()
+			if ok {
+				done <- index
+			}else{
+				done <- -1
+			}
+		}(index)
 		select {
 		case <-time.After(500 * time.Millisecond):
 			DPrintf("client %d timeout,leader:%d,connect cnt = %d", 
@@ -188,16 +196,16 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			index = (index + 1) % n
 			ck.lastLeader = -1
 			continue
-		case ok := <-done:
-			if ok {
-				ret := ck.ProcessPutAppendRsp(index, reply)
-				if ret {
+		case ret := <-done:
+			if ret>=0 {
+				ok := ck.ProcessPutAppendRsp(ret, reply)
+				if ok {
 					DPrintf("client %d putappend to %d success,key = %s,value = %s,seq=%d",
 					ck.Id,index,key,value,seqNum)
 					return
 				}
 			} else {
-				DPrintf("client %d call putappend %d fail", ck.Id, index)
+				DPrintf("client %d call putappend  fail", ck.Id)
 			}
 			ck.lastLeader = -1
 			index = (index + 1) % n

@@ -6,6 +6,8 @@ import (
 	"log"
 	"raft"
 	"sync"
+	"bytes"
+	"encoding/gob"
 )
 
 const Debug = 1 
@@ -38,6 +40,7 @@ type KVServer struct {
 	me      		int
 	rf      		*raft.Raft
 	persist 		*raft.Persister
+	snapshotIndex	int
 	kvMap			map[string]string
 	applyCh 		chan raft.ApplyMsg
 	clientMap 		map[int64]LastSeq
@@ -184,6 +187,16 @@ func (kv *KVServer) WriteKvMap() {
 		select{
 			case msg,ok := <-kv.applyCh:
 				if ok {
+					if msg.CommandValid == false {
+						kv.mu.Lock()
+						kv.readSnapshot(msg.SnapshotBytes)
+						kv.persist.SaveSnapshot(msg.SnapshotBytes)
+						kv.mu.Unlock()
+						//(msg.SnapshotBytes,MakeSnapshot(msg.CommandIndex))
+						continue
+						//kv.MakeSnapshot(msg.CommandIndex)
+						//kv.persist.SaveStateAndSnapshot()
+					}
 					if msg.Command != nil && msg.CommandValid {
 						op := msg.Command.(Op)
 						kv.mu.Lock()
@@ -238,6 +251,15 @@ func (kv *KVServer) WriteKvMap() {
 				}else{
 					DPrintf("apply ch close?")
 				}
+				if kv.CheckSnapshot() {
+					DPrintf("kv %d begin to snapshot,index = %d",kv.me,msg.CommandIndex)
+					kv.mu.Lock()
+					data := kv.makeSnapshot(msg.CommandIndex)
+					kv.persist.SaveSnapshot(data)
+					DPrintf("kv %d begin to call raft newsnapshot",kv.me)
+					kv.rf.NewSnapshot(msg.CommandIndex)
+					kv.mu.Unlock()
+				}
 			case <-kv.stopCh:
 				DPrintf("stop writekvmap %d",kv.me)
 				return
@@ -283,7 +305,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv := new(KVServer)
 	kv.me = me
-	kv.maxraftstate = maxraftstate
+	//kv.maxraftstate = maxraftstate
+	kv.maxraftstate = 512
 	kv.clientNum = 0
 	kv.stopCh = make(chan struct{})
 	kv.chRecMap = make(map[int](chan string))
@@ -291,13 +314,16 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.kvMap = make(map[string]string)
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.persist = persister
+	kv.snapshotIndex = 0
+	data := kv.persist.ReadSnapshot()
+	kv.readSnapshot(data)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	// You may need initialization code here.
 	go kv.WriteKvMap()
 	return kv
 }
 
-func (kv *KVServer) CheckSnapshot bool {
+func (kv *KVServer) CheckSnapshot() bool {
 	if kv.maxraftstate < 0 {
 		return false
 	}		
@@ -305,4 +331,30 @@ func (kv *KVServer) CheckSnapshot bool {
 		return true
 	}
 	return false
+}
+
+func (kv *KVServer) makeSnapshot(index int) []byte {
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+	kv.snapshotIndex = index
+	e.Encode(kv.kvMap)
+	e.Encode(kv.clientMap)
+	e.Encode(kv.snapshotIndex)
+	
+	data := w.Bytes()
+	return data
+	//kv.persist.SaveSnapshot(data)
+}
+
+func (kv *KVServer) readSnapshot(data []byte) {
+	if data == nil {
+		return
+	}
+	r := bytes.NewBuffer(data)
+	d := gob.NewDecoder(r)
+	kv.kvMap = make(map[string]string)
+	kv.clientMap = make(map[int64]LastSeq)
+	d.Decode(&kv.kvMap)
+	d.Decode(&kv.clientMap)
+	d.Decode(&kv.snapshotIndex)
 }

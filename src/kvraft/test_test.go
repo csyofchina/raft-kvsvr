@@ -10,6 +10,8 @@ import "log"
 import "strings"
 import "sync"
 import "sync/atomic"
+import "net/http"
+import _ "net/http/pprof"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
@@ -430,6 +432,9 @@ func TestBasic3A(t *testing.T) {
 
 func TestConcurrent3A(t *testing.T) {
 	// Test: many clients (3A) ...
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 	GenericTest(t, "3A", 5, false, false, false, -1)
 }
 
