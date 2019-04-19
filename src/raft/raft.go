@@ -414,6 +414,8 @@ func (rf *Raft) SendApplyState(server int, args *ApplyStateArgs, reply *ApplySta
 func (rf *Raft) ApplyState(args *ApplyStateArgs, reply *ApplyStateReply) {
 	applyMsg := []ApplyMsg{}
 	rf.mu.Lock()
+	DPrintf1("svr %d applystate,lastapplied=%d,commitindex=%d,snapindex=%d,len=%d,localcommitindex=%d",
+	rf.me,rf.lastApplied,args.CommitIndex,rf.snapshotIndex,len(rf.log.entries),rf.commitIndex)
 	if rf.lastApplied < args.CommitIndex {
 		for i := rf.lastApplied + 1; i <= args.CommitIndex; i++ {
 			msg := ApplyMsg{
@@ -469,7 +471,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// log doesn't contain an entry at prevLogIndex whose term matches preLogTerm
 	if args.PreLogIndex < rf.snapshotIndex {
 		reply.Term = rf.currTerm
-		reply.ConflictTerm = rf.snapshotTerm
+		//reply.ConflictTerm = rf.snapshotTerm
+		reply.ConflictTerm = 0
 		reply.ConflictIndex = rf.snapshotIndex
 		reply.Success = false
 		goto End
@@ -644,7 +647,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	lastIndex, lastTerm := rf.log.lastInfo()
 	if args.Term < rf.currTerm {
-		//DPrintf1("RequestVote: candidate = %d: voteId = %d ret = -1", args.CandidateId, rf.me)
+		DPrintf1("RequestVote: candidate = %d: voteId = %d ret = -1", args.CandidateId, rf.me)
 		reply.Term = rf.currTerm
 	} else {
 		if args.Term > rf.currTerm {
@@ -669,11 +672,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 				DPrintf1("%d vote for %d,argsTerm=%d,argsIndex=%d,Term=%d,Index=%d",
 					rf.me, args.CandidateId, args.LastLogTerm, args.LastLogIndex, lastTerm, lastIndex)
 			} else {
-				DPrintf1("%d refuse to vote for %d,argsTerm=%d,argsIndex=%d,Term=%d,Index=%d",
-					rf.me, args.CandidateId, args.LastLogTerm, args.LastLogIndex, lastTerm, lastIndex)
+				DPrintf1("%d refuse to vote for %d,state = %sargsTerm=%d,argsIndex=%d,Term=%d,Index=%d",
+					rf.me, args.CandidateId, rf.state,args.LastLogTerm, args.LastLogIndex, lastTerm, lastIndex)
 			}
 		} else {
-			DPrintf("%d refuse to vote for %d,have voted for %d",
+			DPrintf1("%d refuse to vote for %d,have voted for %d",
 				rf.me, args.CandidateId, rf.votedFor)
 		}
 	}
@@ -757,7 +760,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	} else {
 		rf.log.entries = append(rf.log.entries[0:1],rf.log.entries[args.LastIncludedIndex-rf.snapshotIndex+1:]...)
 	}
-	DPrintf2("svr %d after snapshot entry = %v",rf.log.entries)
+	DPrintf2("svr %d after snapshot entry = %v",rf.me,rf.log.entries)
 	rf.commitIndex = args.LastIncludedIndex
 	rf.lastApplied = args.LastIncludedIndex
 	rf.snapshotIndex = args.LastIncludedIndex
@@ -776,19 +779,23 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs,
 
 func (rf *Raft) ProcInstallSnapshot(svrindex int, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	if rf.state != Leader {
-		return
+		goto End
 	}
 	if reply.Term > rf.currTerm {
 		rf.currTerm = reply.Term
 		rf.votedFor = -1
 		rf.leaderId = -1
 		rf.state = Follower
-		return
+		DPrintf1("svr %d proc snapshotrsp and convert to follower",rf.me)
+		goto End
 	}
 	rf.nextIndex[svrindex] = rf.snapshotIndex + 1
 	rf.matchIndex[svrindex] = rf.nextIndex[svrindex] - 1
+End:
+	rf.persist()
+	rf.mu.Unlock()
+	rf.recvAppendRspChan <- 0
 }
 
 //

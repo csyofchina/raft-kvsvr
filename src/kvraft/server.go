@@ -305,8 +305,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv := new(KVServer)
 	kv.me = me
-	//kv.maxraftstate = maxraftstate
-	kv.maxraftstate = 512
+	kv.maxraftstate = maxraftstate
+	//kv.maxraftstate = 512
 	kv.clientNum = 0
 	kv.stopCh = make(chan struct{})
 	kv.chRecMap = make(map[int](chan string))
