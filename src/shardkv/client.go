@@ -13,12 +13,16 @@ import "crypto/rand"
 import "math/big"
 import "shardmaster"
 import "time"
+import "sync"
 
 //
 // which shard is a key in?
 // please use this function,
 // and please do not change it.
 //
+
+var clerknum int64 = 0 
+
 func key2shard(key string) int {
 	shard := 0
 	if len(key) > 0 {
@@ -39,9 +43,19 @@ type Clerk struct {
 	sm       *shardmaster.Clerk
 	config   shardmaster.Config
 	make_end func(string) *labrpc.ClientEnd
+	mu		 sync.Mutex
+	Id		 int64
+	SeqNum	 int
 	// You will have to modify this struct.
 }
 
+func (ck *Clerk) GetClientId() (ret int64) {
+	ck.mu.Lock()
+	clerknum++
+	ret = clerknum
+	ck.mu.Unlock()
+	return
+}
 //
 // the tester calls MakeClerk.
 //
@@ -55,6 +69,8 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck := new(Clerk)
 	ck.sm = shardmaster.MakeClerk(masters)
 	ck.make_end = make_end
+	ck.Id = ck.GetClientId()
+	ck.SeqNum = 1
 	// You'll have to add code here.
 	return ck
 }
@@ -68,7 +84,11 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{}
 	args.Key = key
-
+	args.Id = ck.Id
+	ck.mu.Lock()
+	ck.SeqNum++
+	args.SeqNum = ck.SeqNum
+	ck.mu.Unlock()
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
@@ -103,7 +123,11 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Key = key
 	args.Value = value
 	args.Op = op
-
+	args.Id = ck.Id
+	ck.mu.Lock()
+	ck.SeqNum++
+	args.SeqNum = ck.SeqNum
+	ck.mu.Unlock()
 
 	for {
 		shard := key2shard(key)

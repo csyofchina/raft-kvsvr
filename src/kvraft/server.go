@@ -1,16 +1,16 @@
 package raftkv
 
 import (
+	"bytes"
+	"encoding/gob"
 	"labgob"
 	"labrpc"
 	"log"
 	"raft"
 	"sync"
-	"bytes"
-	"encoding/gob"
 )
 
-const Debug = 1 
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -20,34 +20,34 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 type LastSeq struct {
-	SeqNum	int64
-	LastReply  GetReply
+	SeqNum    int64
+	LastReply GetReply
 }
 
 type Op struct {
-	Key		string
-	Value	string
-	Operation	string
-	ClientId	int64
-	SeqNum		int64
+	Key       string
+	Value     string
+	Operation string
+	ClientId  int64
+	SeqNum    int64
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 }
 
 type KVServer struct {
-	mu      		sync.Mutex
-	me      		int
-	rf      		*raft.Raft
-	persist 		*raft.Persister
-	snapshotIndex	int
-	kvMap			map[string]string
-	applyCh 		chan raft.ApplyMsg
-	clientMap 		map[int64]LastSeq
-	chRecMap		map[int](chan string)		
-	stopCh 			chan struct{}
-	maxraftstate 	int // snapshot if log grows this big
-	clientNum		int64
+	mu            sync.Mutex
+	me            int
+	rf            *raft.Raft
+	persist       *raft.Persister
+	snapshotIndex int
+	kvMap         map[string]string
+	applyCh       chan raft.ApplyMsg
+	clientMap     map[int64]LastSeq
+	chRecMap      map[int](chan string)
+	stopCh        chan struct{}
+	maxraftstate  int // snapshot if log grows this big
+	clientNum     int64
 	// Your definitions here.
 }
 
@@ -55,94 +55,94 @@ func (kv *KVServer) AllocateId() int64 {
 	kv.mu.Lock()
 	kv.clientNum = kv.clientNum + 1
 	newId := kv.clientNum
- 	kv.mu.Unlock()
+	kv.mu.Unlock()
 	return newId
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	var clientId  int64
+	var clientId int64
 	//Is leader?
-	ok,preTerm := kv.rf.IsLeader() 
-	if ok == false {	
+	ok, preTerm := kv.rf.IsLeader()
+	if ok == false {
 		reply.WrongLeader = true
 		reply.Err = ""
 		reply.Id = args.Id
-		DPrintf("kv%d:client %d call wrong leader",kv.me,args.Id)
+		DPrintf("kv%d:client %d call wrong leader", kv.me, args.Id)
 		return
 	}
-	
+
 	//New clinet?
 	/*
-	if args.Id < 0 {
-		reply.Id = kv.AllocateId()
-		clientId = reply.Id 
-	}else {
-		clientId = args.Id
-	}*/
-	kv.mu.Lock()	
+		if args.Id < 0 {
+			reply.Id = kv.AllocateId()
+			clientId = reply.Id
+		}else {
+			clientId = args.Id
+		}*/
+	kv.mu.Lock()
 	lastSeq, ok := kv.clientMap[clientId]
 	kv.mu.Unlock()
 	if ok == true {
 		if args.SeqNum == lastSeq.SeqNum {
-			reply.Value  = lastSeq.LastReply.Value
+			reply.Value = lastSeq.LastReply.Value
 			reply.Err = ""
 			reply.WrongLeader = false
 			DPrintf("Get: %d call %d get before seqNum = %d",
-				clientId,kv.me,args.SeqNum)
+				clientId, kv.me, args.SeqNum)
 			return
 		}
 	}
 	//raft
-	cmd := Op{Key:args.Key,Value:"",
-		Operation:"Get",ClientId:clientId,SeqNum:args.SeqNum}
-	index,_,_ := kv.rf.Start(cmd)
+	cmd := Op{Key: args.Key, Value: "",
+		Operation: "Get", ClientId: clientId, SeqNum: args.SeqNum}
+	index, _, _ := kv.rf.Start(cmd)
 	recCh := make(chan string)
 	kv.mu.Lock()
 	kv.chRecMap[index] = recCh
 	kv.mu.Unlock()
-	DPrintf("kv %d, start cmd with index = %d",kv.me,index)
-	select{
-		case <-recCh:
-			 ok,nowTerm := kv.rf.IsLeader()//add term information 
-		     if ok && nowTerm == preTerm {
-			    reply.WrongLeader = false 	
-		     }else{
-				 reply.WrongLeader = true
-		     }  
-			 reply.Err = ""
-			 kv.mu.Lock()
-			 reply.Value = kv.kvMap[args.Key] 
-			 kv.mu.Unlock()
-			 DPrintf("kv %d finish Get,key=%s,value=%s",kv.me,args.Key,reply.Value)
-		case  <-kv.stopCh:
-			 DPrintf("Stop get wait")
+	DPrintf("kv %d, start cmd with index = %d", kv.me, index)
+	select {
+	case <-recCh:
+		ok, nowTerm := kv.rf.IsLeader() //add term information
+		if ok && nowTerm == preTerm {
+			reply.WrongLeader = false
+		} else {
+			reply.WrongLeader = true
+		}
+		reply.Err = ""
+		kv.mu.Lock()
+		reply.Value = kv.kvMap[args.Key]
+		kv.mu.Unlock()
+		DPrintf("kv %d finish Get,key=%s,value=%s", kv.me, args.Key, reply.Value)
+	case <-kv.stopCh:
+		DPrintf("Stop get wait")
 	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
-	var clientId  int64
+	var clientId int64
 	//Is leader?
-	ok,preTerm := kv.rf.IsLeader() 
-	if ok == false {	
+	ok, preTerm := kv.rf.IsLeader()
+	if ok == false {
 		reply.WrongLeader = true
 		reply.Err = ""
 		reply.Id = args.Id
-		DPrintf("kv%d:client %d call wrong leader",kv.me,args.Id)
+		DPrintf("kv%d:client %d call wrong leader", kv.me, args.Id)
 		return
 	}
 	clientId = args.Id
 	//New clinet?
 	/*
-	if args.Id < 0 {
-		reply.Id = kv.AllocateId()
-		clientId = reply.Id 
-	}else {
-		clientId = args.Id
-	}*/
-	
-	kv.mu.Lock()	
+		if args.Id < 0 {
+			reply.Id = kv.AllocateId()
+			clientId = reply.Id
+		}else {
+			clientId = args.Id
+		}*/
+
+	kv.mu.Lock()
 	lastSeq, ok := kv.clientMap[clientId]
 	kv.mu.Unlock()
 	if ok == true {
@@ -151,122 +151,123 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 			reply.Err = ""
 			reply.WrongLeader = false
 			DPrintf("Put: %d call %d get before seqNum = %d",
-				clientId,kv.me,args.SeqNum)
+				clientId, kv.me, args.SeqNum)
 			return
 		}
 	}
-	
+
 	//raft
-	cmd := Op{Key:args.Key,Value:args.Value,
-		Operation:args.Op,ClientId:clientId,SeqNum:args.SeqNum}
-	index,_,_ := kv.rf.Start(cmd)
+	cmd := Op{Key: args.Key, Value: args.Value,
+		Operation: args.Op, ClientId: clientId, SeqNum: args.SeqNum}
+	index, _, _ := kv.rf.Start(cmd)
 	recCh := make(chan string)
 	kv.mu.Lock()
 	kv.chRecMap[index] = recCh
 	kv.mu.Unlock()
-	DPrintf("kv %d ,start cmd with index = %d,args=%+v",kv.me,index,args)
-	select{
-		case  <-recCh:
-		  	 ok,nowTerm := kv.rf.IsLeader()//add term information 
-		     if ok && nowTerm == preTerm {
-			    reply.WrongLeader = false 	
-		     }else{
-				 reply.WrongLeader = true
-		     }  
-			 reply.Id = clientId
-			 reply.Err = ""
-			 DPrintf("kv %d finish PutAppend ,index = %d,clientId = %d,seqNum = %d,key =%s,value=%s",
-			 	kv.me,index,clientId,args.SeqNum,args.Key,args.Value)
-		case  <-kv.stopCh:
-			DPrintf("stop put wait")
+	DPrintf("kv %d ,start cmd with index = %d,args=%+v", kv.me, index, args)
+	select {
+	case <-recCh:
+		ok, nowTerm := kv.rf.IsLeader() //add term information
+		if ok && nowTerm == preTerm {
+			reply.WrongLeader = false
+		} else {
+			reply.WrongLeader = true
+		}
+		reply.Id = clientId
+		reply.Err = ""
+		DPrintf("kv %d finish PutAppend ,index = %d,clientId = %d,seqNum = %d,key =%s,value=%s",
+			kv.me, index, clientId, args.SeqNum, args.Key, args.Value)
+	case <-kv.stopCh:
+		DPrintf("stop put wait")
 	}
 }
 
 func (kv *KVServer) WriteKvMap() {
-	for{
-		select{
-			case msg,ok := <-kv.applyCh:
-				if ok {
-					if msg.CommandValid == false {
-						kv.mu.Lock()
-						kv.readSnapshot(msg.SnapshotBytes)
-						kv.persist.SaveSnapshot(msg.SnapshotBytes)
-						kv.mu.Unlock()
-						//(msg.SnapshotBytes,MakeSnapshot(msg.CommandIndex))
-						continue
-						//kv.MakeSnapshot(msg.CommandIndex)
-						//kv.persist.SaveStateAndSnapshot()
-					}
-					if msg.Command != nil && msg.CommandValid {
-						op := msg.Command.(Op)
-						kv.mu.Lock()
-						value := "" 
-						if op.Operation == "Put" {
-							preSeq,ok := kv.clientMap[op.ClientId] 
-							if ok {
-								if preSeq.SeqNum == op.SeqNum {
-									DPrintf("kv %d index = %d,client %d put key=%s value=%s again",
-									kv.me,msg.CommandIndex,op.ClientId,op.Key,op.Value)
-									kv.mu.Unlock()
-									break
-								}
-							}
-							kv.kvMap[op.Key] = op.Value
-							value = op.Value
-							kv.clientMap[op.ClientId] = LastSeq{SeqNum:op.SeqNum}
-							DPrintf("kv %d index = %d,client %d put key=%s,value=%s",
-							kv.me,msg.CommandIndex,op.ClientId,op.Key,value)
-						}else if op.Operation == "Append" {
-							preSeq,ok := kv.clientMap[op.ClientId] 
-							if ok {
-								if preSeq.SeqNum == op.SeqNum {
-									DPrintf("kv %d index = %d,client %d append key=%s value=%s again",
-									kv.me,msg.CommandIndex,op.ClientId,op.Key,op.Value)
-									kv.mu.Unlock()
-									break
-								}
-							}
-							kv.kvMap[op.Key] += op.Value
-							value = kv.kvMap[op.Key]
-							kv.clientMap[op.ClientId] = LastSeq{SeqNum:op.SeqNum}
-							DPrintf("kv %d index = %d,client %d append key=%s,value=%s",
-							kv.me,msg.CommandIndex,op.ClientId,op.Key,op.Value)
-					    }else if op.Operation == "Get" {
-					    	value = kv.kvMap[op.Key]
-					    	lastReply := GetReply{WrongLeader:false,Value:value,Id:op.ClientId}
-							kv.clientMap[op.ClientId] = LastSeq{SeqNum:op.SeqNum,LastReply: lastReply}
-					    }else{
-					    	DPrintf("Unclear op %s",op.Operation)
-					    }
-					    chRec, ok := kv.chRecMap[msg.CommandIndex]
-						
-					    if ok && chRec != nil {
-							close(chRec)
-							delete(kv.chRecMap,msg.CommandIndex)   	
-					    }
-					    kv.mu.Unlock()
-					 }else{
-					 	DPrintf("Command nil")
-					 }
-				}else{
-					DPrintf("apply ch close?")
-				}
-				if kv.CheckSnapshot() {
-					DPrintf("kv %d begin to snapshot,index = %d",kv.me,msg.CommandIndex)
+	for {
+		select {
+		case msg, ok := <-kv.applyCh:
+			if ok {
+				if msg.CommandValid == false {
 					kv.mu.Lock()
-					data := kv.makeSnapshot(msg.CommandIndex)
-					kv.persist.SaveSnapshot(data)
-					DPrintf("kv %d begin to call raft newsnapshot",kv.me)
-					kv.rf.NewSnapshot(msg.CommandIndex)
+					kv.readSnapshot(msg.SnapshotBytes)
+					kv.persist.SaveSnapshot(msg.SnapshotBytes)
 					kv.mu.Unlock()
+					//(msg.SnapshotBytes,MakeSnapshot(msg.CommandIndex))
+					continue
+					//kv.MakeSnapshot(msg.CommandIndex)
+					//kv.persist.SaveStateAndSnapshot()
 				}
-			case <-kv.stopCh:
-				DPrintf("stop writekvmap %d",kv.me)
-				return
+				if msg.Command != nil && msg.CommandValid {
+					op := msg.Command.(Op)
+					kv.mu.Lock()
+					value := ""
+					if op.Operation == "Put" {
+						preSeq, ok := kv.clientMap[op.ClientId]
+						if ok {
+							if preSeq.SeqNum == op.SeqNum {
+								DPrintf("kv %d index = %d,client %d put key=%s value=%s again",
+									kv.me, msg.CommandIndex, op.ClientId, op.Key, op.Value)
+								kv.mu.Unlock()
+								break
+							}
+						}
+						kv.kvMap[op.Key] = op.Value
+						value = op.Value
+						kv.clientMap[op.ClientId] = LastSeq{SeqNum: op.SeqNum}
+						DPrintf("kv %d index = %d,client %d put key=%s,value=%s",
+							kv.me, msg.CommandIndex, op.ClientId, op.Key, value)
+					} else if op.Operation == "Append" {
+						preSeq, ok := kv.clientMap[op.ClientId]
+						if ok {
+							if preSeq.SeqNum == op.SeqNum {
+								DPrintf("kv %d index = %d,client %d append key=%s value=%s again",
+									kv.me, msg.CommandIndex, op.ClientId, op.Key, op.Value)
+								kv.mu.Unlock()
+								break
+							}
+						}
+						kv.kvMap[op.Key] += op.Value
+						value = kv.kvMap[op.Key]
+						kv.clientMap[op.ClientId] = LastSeq{SeqNum: op.SeqNum}
+						DPrintf("kv %d index = %d,client %d append key=%s,value=%s",
+							kv.me, msg.CommandIndex, op.ClientId, op.Key, op.Value)
+					} else if op.Operation == "Get" {
+						value = kv.kvMap[op.Key]
+						lastReply := GetReply{WrongLeader: false, Value: value, Id: op.ClientId}
+						kv.clientMap[op.ClientId] = LastSeq{SeqNum: op.SeqNum, LastReply: lastReply}
+					} else {
+						DPrintf("Unclear op %s", op.Operation)
+					}
+					chRec, ok := kv.chRecMap[msg.CommandIndex]
+
+					if ok && chRec != nil {
+						close(chRec)
+						delete(kv.chRecMap, msg.CommandIndex)
+					}
+					kv.mu.Unlock()
+				} else {
+					DPrintf("Command nil")
+				}
+			} else {
+				DPrintf("apply ch close?")
+			}
+			if kv.CheckSnapshot() {
+				DPrintf("kv %d begin to snapshot,index = %d", kv.me, msg.CommandIndex)
+				kv.mu.Lock()
+				data := kv.makeSnapshot(msg.CommandIndex)
+				kv.persist.SaveSnapshot(data)
+				DPrintf("kv %d begin to call raft newsnapshot", kv.me)
+				kv.rf.NewSnapshot(msg.CommandIndex)
+				kv.mu.Unlock()
+			}
+		case <-kv.stopCh:
+			DPrintf("stop writekvmap %d", kv.me)
+			return
 		}
 	}
-	
+
 }
+
 //
 // the tester calls Kill() when a KVServer instance won't
 // be needed again. you are not required to do anything
@@ -274,13 +275,13 @@ func (kv *KVServer) WriteKvMap() {
 // turn off debug output from this instance.
 //
 func (kv *KVServer) Kill() {
-	DPrintf("start to kill %d ",kv.me)
+	DPrintf("start to kill %d ", kv.me)
 	go func() {
 		kv.rf.Kill()
 	}()
 	close(kv.stopCh)
-//	DPrintf("%d wait for close raft", kv.me)
-	DPrintf("kill %d success",kv.me)
+	//	DPrintf("%d wait for close raft", kv.me)
+	DPrintf("kill %d success", kv.me)
 	// Your code here, if desired.
 }
 
@@ -326,8 +327,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 func (kv *KVServer) CheckSnapshot() bool {
 	if kv.maxraftstate < 0 {
 		return false
-	}		
-	if kv.maxraftstate - kv.persist.RaftStateSize() < kv.maxraftstate/10 {
+	}
+	if kv.maxraftstate-kv.persist.RaftStateSize() < kv.maxraftstate/10 {
 		return true
 	}
 	return false
@@ -340,7 +341,7 @@ func (kv *KVServer) makeSnapshot(index int) []byte {
 	e.Encode(kv.kvMap)
 	e.Encode(kv.clientMap)
 	e.Encode(kv.snapshotIndex)
-	
+
 	data := w.Bytes()
 	return data
 	//kv.persist.SaveSnapshot(data)

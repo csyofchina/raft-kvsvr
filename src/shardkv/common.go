@@ -23,6 +23,8 @@ type PutAppendArgs struct {
 	Key   string
 	Value string
 	Op    string // "Put" or "Append"
+	SeqNum	int
+	Id		int64
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
@@ -35,6 +37,9 @@ type PutAppendReply struct {
 
 type GetArgs struct {
 	Key string
+	SeqNum	int
+	Id		int64
+	
 	// You'll have to add definitions here.
 }
 
