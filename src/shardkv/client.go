@@ -137,6 +137,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				srv := ck.make_end(servers[si])
 				var reply PutAppendReply
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
+				DPrintf("client %d put reply = %+v",ck.Id,reply)
 				if ok && reply.WrongLeader == false && reply.Err == OK {
 					return
 				}

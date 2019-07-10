@@ -59,6 +59,7 @@ func (ck *Clerk) Query(num int) Config {
 			if ok && reply.WrongLeader == false {
 				if reply.Err == "" {
 					ck.seqNum++
+					DPrintf("client %d Query finish",ck.id)
 					return reply.Config
 				}
 			}

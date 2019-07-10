@@ -249,7 +249,7 @@ func (kv *KVServer) WriteKvMap() {
 					DPrintf("Command nil")
 				}
 			} else {
-				DPrintf("apply ch close?")
+				DPrintf("apply ch close")
 			}
 			if kv.CheckSnapshot() {
 				DPrintf("kv %d begin to snapshot,index = %d", kv.me, msg.CommandIndex)
